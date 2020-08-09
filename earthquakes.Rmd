@@ -1,0 +1,147 @@
+---
+title: "COMP4441 Clustering Quakes"
+author: "B. Tennant and Isabel Osgood"
+date: "2/17/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tclust)
+library(mclust)
+library(cluster)
+library(lattice)
+library(dbscan)
+library(ggmap)
+```
+```{r}
+citation('ggmap')
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+#read in data
+data('quakes')
+
+#select columns that we will be using for clustering
+#latitude and longitude
+X <-data.frame(long=quakes$long,lat=quakes$lat)
+#jpeg("regularScatter.jpeg")
+ggplot(X,aes(x=long,y=lat))+geom_point()
+#dev.off()
+```
+
+We want to cluster the quakes by geographical location but we don't know how many clusters to use so we use a the 'Within Clusters Sum of Squares' to find that number of clusters.
+
+$WCSS = \sum_{P_i in Cluster 1} dist(P_i,C_1)+\sum_{P_i in Cluster2}dist(P_i,C_2)$
+
+We loop through each number of clusters, the algorithm calculates the centroid of each cluster/clusters and sums the squared distances from each point to that centroid. We then graph the WCSS's and find the 'elbow' and that elbow is our optimal number of clusters.
+
+```{r}
+#use elbow method to find optimal number of clusters
+set.seed(10)
+wcss <- vector()
+for(i in 1:10) wcss[i] <- sum(kmeans(X,i)$withinss)
+#jpeg("WCSSplot.jpeg")
+plot(1:10, wcss, type='b', main = paste('Clusters of quakes'),xlab='Number of clusters',ylab='WCSS')
+#dev.off()
+```
+```{r}
+bb <- c(160,-40,190,-11)
+myMap <- get_map(location=bb,source='stamen',maptype = 'terrain',crop=FALSE)
+#jpeg("QuakesOnWorldMap.jpeg")
+ggmap(myMap)+geom_point(aes(x=long,y=lat),data=X)
+#dev.off()
+#map <- get_map(location = c(100,0,120,10),source= 'stamen', maptype='terrain',crop=FALSE)
+#ggmap(map)
+
+```
+
+
+```{r cars}
+#assign optimum clusters
+num.clusters <- 3
+
+#fit data to kmeans clustering
+#kmeans <- kmeans(X, num.clusters,iter.max = 300,nstart=10)
+
+#visualize clusters
+#library(cluster)
+#clusplot(X,kmeans$cluster,lines=0,shade=TRUE,color=TRUE,labels = 2, plotchar=FALSE,cex=0.5,main=paste('Clusters of Quakes'))
+
+clust <- tkmeans(X,k=num.clusters,alpha=0.0)
+#jpeg("Clusters.jpeg")
+plot(clust)
+#dev.off()
+
+#dbscan <- dbscan(x=X,eps=2)
+#clusplot(X,dbscan(x=X,eps=2.5)$cluster,color=TRUE)
+
+```
+```{r}
+mean(quakes$mag[clust$cluster==1])
+var(quakes$mag[clust$cluster==1])
+mean(quakes$mag[clust$cluster==2])
+var(quakes$mag[clust$cluster==2])
+mean(quakes$mag[clust$cluster==3])
+var(quakes$mag[clust$cluster==3])
+
+length(clust$cluster[clust$cluster==1])
+length(clust$cluster[clust$cluster==2])
+length(clust$cluster[clust$cluster==3])
+clust$centers
+```
+```{r}
+c<- clust$cluster
+
+x <- cbind(X, c)
+clus1 <- x %>% filter(c == 1)
+clus2 <- x %>% filter(c == 2)
+clus3 <- x %>% filter(c == 3)
+clus4 <- x %>% filter(c == 4)
+
+rr <- rbind(clus1, clus2, clus4)
+loess_fit1 <- loess(lat ~ long, clus1)
+#lines(x$long, predict(loess_fit1), col = "blue")
+plot(clust) 
+xyplot(x$lat ~ x$long, type=c("smooth", "p"))
+xyplot(clus1$lat ~ clus1$long, type=c("smooth", "p"))
+xyplot(clus2$lat ~ clus2$long, type=c("smooth", "p"))
+xyplot(clus3$lat ~ clus3$long, type=c("smooth", "p"))
+xyplot(clus4$lat ~ clus4$long, type=c("smooth", "p"))
+
+xyplot(rr$lat ~ rr$long, type=c("smooth", "p"))
+```
+
+
+Chi Square test for independnce of depth and magnitude
+```{r}
+#null hypothesis: depth and magnitude are indpendent
+dep.v.mag <- data.frame(depth = quakes$depth, mag = quakes$mag)
+chisq.test(dep.v.mag)
+```
+
+The chi square test of depth vs magnitude yields a very signifcant p-value giving us very strong evidence against the nll hypothesis so we conclude that the values are dependent. 
+
+
+```{r}
+clust1 <- filter(quakes,kmeans$cluster==1)
+clust2 <- filter(quakes,kmeans$cluster==2)
+clust3 <- filter(quakes,kmeans$cluster==3)
+clust4 <- filter(quakes,kmeans$cluster==4)
+
+plot(clust3)
+clust3.res <- lm(lat~long,clust3)$residuals
+clust3.df <- data.frame(dist = abs(clust3.res), mag = clust3$mag)
+chisq.test(clust3.df$dist,clust3.df$mag)
+```
+I estimated the fault line to be a abline for the points in cluster 3, we can find the distance of each point from that 'fault line'. We then use a chi square test to see if the magnitude of the quake is independent of the distance from the fault line. The test yielded an insignificant p-value of 0.4155 which does not give us evidence against the null hypothesis so we cannot reject it, so it is possible that the distance from the fault line and the magnitude are independent.
